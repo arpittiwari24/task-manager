@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Task Manager with Deadlines</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      padding: 2rem;
+      max-width: 700px;
+      margin: auto;
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+
+    form {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    input[type="text"],
+    input[type="date"] {
+      padding: 0.5rem;
+      font-size: 1rem;
+      flex: 1;
+    }
+
+    button {
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+
+    .task-group {
+      margin-top: 2rem;
+    }
+
+    .task-group h3 {
+      border-bottom: 2px solid #ccc;
+      padding-bottom: 0.3rem;
+      color: #333;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    li {
+      background: #fff;
+      margin: 0.5rem 0;
+      padding: 0.75rem;
+      border-radius: 5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-left: 4px solid #0077cc;
+    }
+
+    li.done {
+      text-decoration: line-through;
+      opacity: 0.6;
+      border-left: 4px solid green;
+    }
+
+    li.today {
+      background-color: #ffe5e5;
+      border-left: 4px solid red;
+    }
+
+    li.overdue {
+      background-color: #fff3cd;
+      border-left: 4px solid orange;
+    }
+
+    .deadline {
+      font-size: 0.85rem;
+      color: #555;
+      margin-top: 0.25rem;
+    }
+
+    .scold {
+      color: red;
+      font-weight: bold;
+      font-size: 0.85rem;
+      margin-left: 0.5rem;
+    }
+
+    .actions button {
+      margin-left: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Task Manager</h1>
+  <form id="taskForm">
+    <input type="text" id="taskInput" placeholder="Enter a new task" required>
+    <input type="date" id="deadlineInput" required>
+    <button type="submit">Add</button>
+  </form>
+
+  <div id="taskGroups"></div>
+
+  <script>
+    let db;
+    const dbName = "taskDB";
+    const storeName = "tasks";
+
+    const openDB = () => {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(dbName, 2);
+
+        request.onupgradeneeded = function(e) {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(storeName)) {
+            db.createObjectStore(storeName, { keyPath: "id", autoIncrement: true });
+          } else {
+            const store = e.target.transaction.objectStore(storeName);
+            if (!store.indexNames.contains("deadline")) {
+              store.createIndex("deadline", "deadline", { unique: false });
+            }
+          }
+        };
+
+        request.onsuccess = function(e) {
+          db = e.target.result;
+          resolve();
+        };
+
+        request.onerror = function(e) {
+          reject("DB error: " + e.target.errorCode);
+        };
+      });
+    };
+
+    const addTask = (task) => {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      store.add(task);
+    };
+
+    const getAllTasks = () => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(storeName, "readonly");
+        const store = tx.objectStore(storeName);
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+      });
+    };
+
+    const updateTask = (task) => {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      store.put(task);
+    };
+
+    const deleteTask = (id) => {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+      store.delete(id);
+    };
+
+    const toggleDone = async (id) => {
+      const tx = db.transaction(storeName, "readonly");
+      const store = tx.objectStore(storeName);
+      const request = store.get(id);
+      request.onsuccess = () => {
+        const task = request.result;
+        task.done = !task.done;
+        updateTask(task);
+        renderTasks();
+      };
+    };
+
+    const removeTask = (id) => {
+      deleteTask(id);
+      renderTasks();
+    };
+
+    function formatDate(date) {
+      return new Date(date).toISOString().split("T")[0];
+    }
+
+    function getCategory(taskDate) {
+      const today = formatDate(new Date());
+      const tomorrow = formatDate(new Date(Date.now() + 86400000));
+
+      if (taskDate < today) return "Overdue";
+      if (taskDate === today) return "Today";
+      if (taskDate === tomorrow) return "Tomorrow";
+      return "Upcoming";
+    }
+
+    const renderTasks = async () => {
+      const taskGroups = document.getElementById("taskGroups");
+      taskGroups.innerHTML = "";
+
+      const tasks = await getAllTasks();
+      const grouped = { Today: [], Tomorrow: [], Upcoming: [], Overdue: [] };
+
+      tasks.forEach(task => {
+        const cat = getCategory(task.deadline);
+        grouped[cat].push(task);
+      });
+
+      Object.keys(grouped).forEach(group => {
+        if (grouped[group].length === 0) return;
+
+        const section = document.createElement("div");
+        section.className = "task-group";
+
+        const title = document.createElement("h3");
+        title.textContent = group;
+        section.appendChild(title);
+
+        const ul = document.createElement("ul");
+
+        grouped[group].forEach(task => {
+          const li = document.createElement("li");
+          li.className = task.done ? "done" : "";
+          if (group === "Today") li.classList.add("today");
+          if (group === "Overdue") li.classList.add("overdue");
+
+          li.innerHTML = `
+            <div>
+              <span>${task.text}</span>
+              <div class="deadline">Deadline: ${task.deadline}</div>
+              ${group === "Overdue" && !task.done ? `<div class="scold">You had ONE job!</div>` : ""}
+            </div>
+            <div class="actions">
+              <button onclick="toggleDone(${task.id})">✅</button>
+              <button onclick="removeTask(${task.id})">❌</button>
+            </div>
+          `;
+          ul.appendChild(li);
+        });
+
+        section.appendChild(ul);
+        taskGroups.appendChild(section);
+      });
+    };
+
+    document.getElementById("taskForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const input = document.getElementById("taskInput");
+      const deadline = document.getElementById("deadlineInput").value;
+      const text = input.value.trim();
+
+      if (text && deadline) {
+        addTask({ text, deadline, done: false });
+        input.value = "";
+        document.getElementById("deadlineInput").value = "";
+        setTimeout(renderTasks, 100);
+      }
+    });
+
+    (async function init() {
+      await openDB();
+      renderTasks();
+    })();
+  </script>
+</body>
+</html>
